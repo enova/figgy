@@ -4,6 +4,8 @@ require 'rspec'
 require 'figgy'
 require 'heredoc_unindent'
 
+require 'vault'
+
 module Figgy::SpecHelpers
   def current_dir
     File.join(Dir.getwd, 'tmp')

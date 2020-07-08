@@ -18,8 +18,10 @@ Gem::Specification.new do |s|
   s.require_paths = ["lib"]
 
   s.add_dependency "json"
+  s.add_dependency 'vault', '~> 0.1'
   s.add_development_dependency "rake"
   s.add_development_dependency "rspec", '~> 3.0'
   s.add_development_dependency "simplecov", '~> 0.9'
   s.add_development_dependency "heredoc_unindent"
+  s.add_development_dependency "pry"
 end

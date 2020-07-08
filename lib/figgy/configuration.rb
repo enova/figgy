@@ -21,9 +21,7 @@ class Figgy
     # By default, uses a +root+ of the current directory, and defines handlers
     # for +.yml+, +.yaml+, +.yml.erb+, +.yaml.erb+, and +.json+.
     def initialize
-      @roots    = [Dir.pwd]
-      @handlers = []
-      @overlays = []
+      @roots    = [FileRoot.new(File, Dir.pwd)]
       @always_reload = false
       @preload = false
       @freeze = false
@@ -40,14 +38,44 @@ class Figgy
       define_handler 'json' do |contents|
         JSON.parse(contents)
       end
+
+      @overlays = [Overlay.new('root', nil, @roots)]
     end
 
+    # Sets the +root+ to a Vault client, rooted at the given path.
+    #
+    # @see #root=
+    def vault_root(vault, path)
+      @roots = [VaultRoot.new(vault, path)]
+      @overlays = [Overlay.new('root', nil, @roots)]
+    end
+
+    # Sets the +root+ to the given file directory.
+    #
+    # @see #vault_root
     def root=(path)
-      @roots = [File.expand_path(path)]
+      @roots = [FileRoot.new(File, File.expand_path(path))]
+      @overlays = [Overlay.new('root', nil, @roots)]
     end
 
+    # Adds a Vault client +root+, rooted at the given path.
+    #
+    # @see #add_root
+    def add_vault_root(vault, path)
+      new_root = VaultRoot.new(vault, path)
+
+      @roots.unshift new_root
+      @overlays.each { |o| o.roots = @roots }
+    end
+
+    # Adds a +root+ at the given file directory.
+    #
+    # @see #add_vault_root
     def add_root(path)
-      @roots.unshift File.expand_path(path)
+      new_root = FileRoot.new(File, File.expand_path(path))
+
+      @roots.unshift new_root
+      @overlays.each { |o| o.roots = @roots }
     end
 
     # @see #always_reload=
@@ -65,6 +93,16 @@ class Figgy
       !!@freeze
     end
 
+    # Adds a new handler for files with any extension in +extensions+.
+    #
+    # @example Adding an XML handler
+    #   config.define_handler 'xml' do |body|
+    #     Hash.from_xml(body)
+    #   end
+    def define_handler(*extensions, &block)
+      Figgy::Root.handlers += extensions.map { |ext| [ext, block] }
+    end
+
     # Adds an overlay named +name+, found at +value+.
     #
     # If a block is given, yields to the block to determine +value+.
@@ -75,60 +113,8 @@ class Figgy
     #   config.define_overlay(:environment) { Rails.env }
     def define_overlay(name, value = nil)
       value = yield if block_given?
-      @overlays << [name, value]
-    end
 
-    # Adds an overlay using the combined values of other overlays.
-    #
-    # @example Searches for files in 'production_US'
-    #   config.define_overlay :environment, 'production'
-    #   config.define_overlay :country, 'US'
-    #   config.define_combined_overlay :environment, :country
-    def define_combined_overlay(*names)
-      combined_name = names.join("_").to_sym
-      value = names.map { |name| overlay_value(name) }.join("_")
-      @overlays << [combined_name, value]
-    end
-
-    # @return [Array<String>] the list of directories to search for config files
-    def overlay_dirs
-      return @roots if @overlays.empty?
-      overlay_values.map { |overlay|
-        @roots.map { |root| overlay ? File.join(root, overlay) : root }
-      }.flatten.uniq
-    end
-
-    # Adds a new handler for files with any extension in +extensions+.
-    #
-    # @example Adding an XML handler
-    #   config.define_handler 'xml' do |body|
-    #     Hash.from_xml(body)
-    #   end
-    def define_handler(*extensions, &block)
-      @handlers += extensions.map { |ext| [ext, block] }
-    end
-
-    # @return [Array<String>] the list of recognized extensions
-    def extensions
-      @handlers.map { |ext, handler| ext }
-    end
-
-    # @return [Proc] the handler for a given filename
-    def handler_for(filename)
-      match = @handlers.find { |ext, handler| filename =~ /\.#{ext}$/ }
-      match && match.last
-    end
-
-    private
-
-    def overlay_value(name)
-      overlay = @overlays.find { |n, v| name == n }
-      raise "No such overlay: #{name.inspect}" unless overlay
-      overlay.last
-    end
-
-    def overlay_values
-      @overlays.map(&:last)
+      @overlays << Overlay.new(name, value, @roots)
     end
   end
 end

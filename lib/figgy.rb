@@ -3,6 +3,8 @@ require "erb"
 require "json"
 
 require "figgy/version"
+require "figgy/root"
+require "figgy/overlay"
 require "figgy/configuration"
 require "figgy/hash"
 require "figgy/finder"
