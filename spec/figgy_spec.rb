@@ -1,6 +1,82 @@
 require 'spec_helper'
 
 describe Figgy do
+  context 'vault' do
+    let(:client) { instance_double(Vault::Client) }
+    let(:logical) { instance_double(Vault::Logical) }
+
+    let(:secret) { Vault::Secret.new(data: { :foo => 'bar', :baz => 2 }) }
+    let(:staging_secret) { Vault::Secret.new(data: { :baz => 'fizz' }) }
+    let(:extra_secret) { Vault::Secret.new(data: { :a => '1' }) }
+
+    let(:config) do
+      test_config do |cfg|
+        cfg.vault_root(client, 'secret/path')
+        cfg.define_overlay(:environment, 'staging')
+      end
+    end
+
+    before do
+      allow(client).to receive(:logical) { logical }
+
+      allow(logical).to receive(:list).with('secret/path/') { ['values', 'nested/', 'staging/'] }
+      allow(logical).to receive(:list).with('secret/path/staging') { ['extra', 'values'] }
+
+      # Default overlay stubs.
+      allow(logical).to receive(:read).with('secret/path/extra') { nil }
+      allow(logical).to receive(:read).with('secret/path/values') { secret }
+
+      # Staging overlay stubs.
+      allow(logical).to receive(:read).with('secret/path/staging/extra') { extra_secret }
+      allow(logical).to receive(:read).with('secret/path/staging/values') { staging_secret }
+    end
+
+    it 'reads and overlays Vault client configs' do
+      expect(config.values).to eq({ "foo" => 'bar', 'baz' => 'fizz' })
+
+      expect(config.values.foo).to eq('bar')
+      expect(config.values['foo']).to eq('bar')
+      expect(config.values[:foo]).to eq('bar')
+
+      expect(config.values.baz).to eq('fizz')
+      expect(config.values['baz']).to eq('fizz')
+      expect(config.values[:baz]).to eq('fizz')
+    end
+
+    it 'ignores namespace if not defined in an overlay' do
+      c = test_config do |cfg|
+        cfg.vault_root(client, 'secret/path')
+      end
+
+      expect(c.values.baz).to eq(2)
+    end
+
+    it "raises an exception if the config can't be found" do
+      expect { config.does_not_exist }.to raise_error(Figgy::FileNotFound)
+    end
+
+    it 'does not preload nested paths as valid configs' do
+      c = test_config do |cfg|
+        cfg.vault_root(client, 'secret/path')
+        cfg.define_overlay(:environment, 'staging')
+
+        cfg.preload = true
+      end
+
+      expect(c.values.foo).to eq('bar')
+      expect(c.values.baz).to eq('fizz')
+      expect(c.extra.a).to eq('1')
+
+      expect { c.staging }.to raise_error(Figgy::FileNotFound)
+      expect { c['staging'] }.to raise_error(Figgy::FileNotFound)
+      expect { c['staging/'] }.to raise_error(Figgy::FileNotFound)
+
+      expect { c.nested }.to raise_error(Figgy::FileNotFound)
+      expect { c['nested/'] }.to raise_error(Figgy::FileNotFound)
+      expect { c[:"nested/"] }.to raise_error(Figgy::FileNotFound)
+    end
+  end
+
   it "reads YAML config files" do
     write_config 'values', <<-YML
     foo: 1
@@ -49,9 +125,8 @@ describe Figgy do
       write_config 'values.yml', 'foo: 1'
       write_config 'values.yaml', 'foo: 2'
 
-      config = test_config do |cfg|
-        cfg.define_handler('yml', 'yaml') { |body| YAML.load(body) }
-      end
+      config = test_config
+
       expect(config.values.foo).to eq(2)
     end
   end
@@ -198,6 +273,11 @@ describe Figgy do
     it "returns false for empty files (cf. YAML.load(''))" do
       write_config 'empty', ''
       expect(test_config.empty).to eq(false)
+    end
+
+    it 'returns [] for files containing an empty array' do
+      write_config 'empty', [].to_yaml
+      expect(test_config.empty).to eq([])
     end
 
     it "returns false for files containing a literal false" do
@@ -349,23 +429,6 @@ describe Figgy do
       end
 
       expect(config.values).to eq({ "foo" => 1, "bar" => 2, "baz" => 3 })
-    end
-  end
-
-  context "combined overlays" do
-    it "allows new overlays to be defined from the values of others" do
-      write_config 'keys', "foo: 1"
-      write_config 'prod/keys', "foo: 2"
-      write_config 'prod_US/keys', "foo: 3"
-
-      config = test_config do |cfg|
-        cfg.define_overlay :default, nil
-        cfg.define_overlay :environment, 'prod'
-        cfg.define_overlay :country, 'US'
-        cfg.define_combined_overlay :environment, :country
-      end
-
-      expect(config.keys).to eq({ "foo" => 3 })
     end
   end
 
